@@ -335,6 +335,126 @@ python3 post_QC2.py \
 
 ---
 
+## 4b. Generating HWE from PLINK2 .pgen files
+
+### Overview
+
+If your genotype data is in **PLINK2 format** (`.pgen` / `.pvar` / `.psam`), use `plink2 --pfile` to compute HWE statistics. This is the case for UK Biobank data processed with PLINK2, which produces files like:
+
+```
+chr1_updated_pgen.pgen   # genotype data
+chr1_updated_pgen.pvar   # variant info
+chr1_updated_pgen.psam   # sample info
+chr1.sample              # BGEN-style sample file (ignore for HWE)
+```
+
+> **Note:** The `.sample` file is a BGEN/Oxford-format artefact. For HWE computation, only the `.pgen`/`.pvar`/`.psam` trio is needed.
+
+### Single chromosome
+
+```bash
+plink2 \
+  --pfile chr1_updated_pgen \
+  --hardy \
+  --out hwe_chr1
+# → produces hwe_chr1.hardy
+```
+
+### All 22 chromosomes (loop + concatenate)
+
+```bash
+# Step 1 — compute HWE per chromosome
+for chr in $(seq 1 22); do
+  plink2 \
+    --pfile chr${chr}_updated_pgen \
+    --hardy \
+    --out hwe_chr${chr}
+done
+
+# Step 2 — concatenate into a single .hardy file (header from chr1 only)
+head -1 hwe_chr1.hardy > hwe_all.hardy
+for chr in $(seq 1 22); do
+  tail -n +2 hwe_chr${chr}.hardy >> hwe_all.hardy
+done
+
+# Step 3 — post-filter REGENIE output
+python3 post_QC2.py \
+  --in  gwas.regenie.gz \
+  --out gwas_filtered.tsv.gz \
+  --emac-min 100 \
+  --maf-min  0.001 \
+  --hwe-file hwe_all.hardy \
+  --hwe-minp 1e-12
+```
+
+### SLURM job array (HPC — one job per chromosome)
+
+For large datasets on a cluster, submit one job per chromosome in parallel:
+
+```bash
+#!/bin/bash
+#SBATCH --array=1-22
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH --time=02:00:00
+#SBATCH --job-name=hwe_plink2
+
+chr=${SLURM_ARRAY_TASK_ID}
+
+plink2 \
+  --pfile chr${chr}_updated_pgen \
+  --hardy \
+  --threads 4 \
+  --out hwe_chr${chr}
+```
+
+Submit with:
+```bash
+sbatch hwe_array.sh
+
+# Once all jobs complete, concatenate:
+head -1 hwe_chr1.hardy > hwe_all.hardy
+for chr in $(seq 1 22); do
+  tail -n +2 hwe_chr${chr}.hardy >> hwe_all.hardy
+done
+```
+
+### Expected output format (`hwe_all.hardy`)
+
+```
+#CHROM  ID                   REF  ALT  HOM_REF_CT  HET_CT  HOM_ALT_CT  TWO_HIT_CT  O(HET)  E(HET)  P
+1       chr1:10894:G:A       G    A    4665        7       1           0           0.0015  0.0015  0.9823
+1       chr1:10915:G:A       G    A    4668        5       0           0           0.0011  0.0011  1.0000
+...
+```
+
+The `post_QC2.py` script auto-detects this PLINK2 format (header starts with `#CHROM`) and matches variants by the `ID` column.
+
+### Troubleshooting
+
+**Variant IDs don't match between `.hardy` and REGENIE output**
+
+The PLINK2 `ID` column must match the REGENIE `ID` column exactly. If your PLINK2 files use a different ID format, harmonize them before running REGENIE:
+
+```bash
+# Check IDs in .hardy file
+head -5 hwe_chr1.hardy | cut -f2
+
+# Check IDs in REGENIE output
+head -5 gwas.regenie | awk '{print $3}'
+```
+
+If they differ (e.g. `rs` IDs vs `chr:pos:ref:alt`), update variant IDs in your `.pvar` file before running `plink2 --hardy`.
+
+**Missing chromosomes**
+
+If some `.pgen` files are missing for certain chromosomes, the loop will fail silently. Check:
+```bash
+ls hwe_chr*.hardy | wc -l   # should be 22
+```
+
+---
+
 ## 5. Pre-munge for LDSC
 
 ### Overview
