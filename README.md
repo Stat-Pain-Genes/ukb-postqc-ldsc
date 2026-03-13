@@ -183,15 +183,59 @@ It adds two new filters compared to `post_QC.py`:
 - **Auto-detection** of space vs tab separator
 - **`--no-hwe` flag** to disable HWE filtering entirely
 
-### Basic Usage
+### ⚠️ Important Note on HWE Filtering
 
+The HWE filter **cannot be computed directly** from REGENIE summary statistics because observed genotype counts (hom_ref, het, hom_alt) are not present in the output. Running HWE from `A1FREQ` + `N` alone would reconstruct expected counts under equilibrium — making the test circular and always returning p ≈ 1.0.
+
+**Two valid options:**
+
+**Option A — Provide a pre-computed HWE file from PLINK (recommended):**
+```bash
+# Step 1 — Compute HWE once on your raw genotype data
+plink  --bfile mydata --hardy --out hwe_stats   # PLINK1 → hwe_stats.hwe
+plink2 --pfile mydata --hardy --out hwe_stats   # PLINK2 → hwe_stats.hardy
+
+# Step 2 — Post-filter REGENIE with external HWE p-values
+python3 post_QC2.py \
+  --in  test1.tsv \
+  --out gwas_filtered.tsv.gz \
+  --emac-min 100 \
+  --maf-min  0.001 \
+  --hwe-file hwe_stats.hwe \
+  --hwe-minp 1e-12
+```
+
+**Option B — Disable HWE (if already filtered upstream on genotype data):**
 ```bash
 python3 post_QC2.py \
   --in  gwas.regenie.gz \
   --out gwas_filtered.tsv.gz \
   --emac-min 100 \
   --maf-min  0.001 \
+  --no-hwe
+```
+
+> If neither `--hwe-file` nor `--no-hwe` is provided, the script will **exit with an error** and explain the issue.
+
+### Basic Usage
+
+```bash
+# With external HWE file (recommended)
+python3 post_QC2.py \
+  --in  gwas.regenie.gz \
+  --out gwas_filtered.tsv.gz \
+  --emac-min 100 \
+  --maf-min  0.001 \
+  --hwe-file hwe_stats.hwe \
   --hwe-minp 1e-12
+
+# Without HWE filter
+python3 post_QC2.py \
+  --in  gwas.regenie.gz \
+  --out gwas_filtered.tsv.gz \
+  --emac-min 100 \
+  --maf-min  0.001 \
+  --no-hwe
 ```
 
 ### All Available Arguments
@@ -209,8 +253,9 @@ python3 post_QC2.py \
 |----------|---------|-------------|
 | `--emac-min` | `100.0` | Minimum EMAC = 2 × N × MAF |
 | `--maf-min` | `0.0` | Minimum MAF (e.g. `0.001`) |
-| `--hwe-minp` | `1e-12` | Minimum HWE p-value |
-| `--no-hwe` | Flag | Disable HWE filter entirely |
+| `--hwe-file` | `None` | Pre-computed HWE file from PLINK (`.hwe` or `.hardy`) — mutually exclusive with `--no-hwe` |
+| `--hwe-minp` | `1e-12` | Minimum HWE p-value (used with `--hwe-file`) |
+| `--no-hwe` | Flag | Disable HWE filter entirely — mutually exclusive with `--hwe-file` |
 | `--log10p-min` | `None` | Minimum LOG10P (e.g. `1.3` = p < 0.05) |
 | `--p-max` | `None` | Maximum P-value (e.g. `0.05`) |
 
@@ -225,17 +270,37 @@ python3 post_QC2.py \
 
 ### Advanced Examples
 
-#### Standard REGENIE filtering
+#### Standard REGENIE filtering with external HWE file (recommended)
 ```bash
+# Step 1 — compute HWE on raw genotypes (PLINK1)
+plink --bfile mydata --hardy --out hwe_stats
+
+# Step 2 — filter REGENIE output
 python3 post_QC2.py \
   --in  gwas.regenie.gz \
   --out gwas_filtered.tsv.gz \
   --emac-min 100 \
   --maf-min  0.001 \
+  --hwe-file hwe_stats.hwe \
   --hwe-minp 1e-12
 ```
 
-#### Without HWE filter (e.g. imputed data or rare variants)
+#### With PLINK2 .hardy file
+```bash
+# Step 1 — compute HWE on raw genotypes (PLINK2)
+plink2 --pfile mydata --hardy --out hwe_stats
+
+# Step 2 — filter REGENIE output
+python3 post_QC2.py \
+  --in  gwas.regenie.gz \
+  --out gwas_filtered.tsv.gz \
+  --emac-min 100 \
+  --maf-min  0.001 \
+  --hwe-file hwe_stats.hardy \
+  --hwe-minp 1e-12
+```
+
+#### Without HWE filter (e.g. if already applied upstream on .bed data)
 ```bash
 python3 post_QC2.py \
   --in  gwas.regenie.gz \
@@ -265,7 +330,8 @@ python3 post_QC2.py \
 | MAF filter | ❌ | ✅ `--maf-min` |
 | P-value filter | ❌ | ✅ `--log10p-min` / `--p-max` |
 | `--no-hwe` | ✅ | ✅ |
-| Genotype count columns | ✅ | Estimated from A1FREQ + N |
+| HWE from external file | ❌ | ✅ `--hwe-file` (PLINK1 `.hwe` or PLINK2 `.hardy`) |
+| Genotype count columns | ✅ | ⚠️ Requires external `--hwe-file` |
 
 ---
 
