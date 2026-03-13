@@ -2,8 +2,15 @@
 
 ## UK Biobank GWAS Post-QC & LDSC Pre-munge — Python Utilities
 
-This repository provides two Python scripts that reimplement the functionality of the original C/C++ utilities (`post_filter.C` and `prep_munge.C`) for **post-GWAS QC** and **preparation of summary statistics for LDSC**.
-They are designed for outputs from **REGENIE** (or similar GWAS tools) and mimic the logic used in the PLINK2 statistical routines (HWE tests, EMAC filters).
+This repository provides three Python scripts for **post-GWAS QC** and **preparation of summary statistics for LDSC**.
+
+| Script | Input Format | Description |
+|--------|-------------|-------------|
+| `post_QC.py` | REGENIE (custom TSV with `Info` field) | Original post-filter — EMAC + HWE |
+| `post_QC2.py` | **REGENIE native** (`CHROM GENPOS ID ALLELE0 ALLELE1 A1FREQ N ...`) | New — EMAC + HWE + MAF + P-value filter, auto-detects space/tab separator |
+| `prep_munge.py` | Filtered TSV | Reformats to LDSC-compatible format |
+
+Scripts are designed for outputs from **REGENIE** and mimic PLINK2 statistical routines (HWE tests, EMAC filters).
 
 ---
 
@@ -160,7 +167,109 @@ Statistiques de filtrage:
 
 ---
 
-## 4. Pre-munge for LDSC
+## 4. Post-filtering with post_QC2.py (REGENIE native format)
+
+### Overview
+
+`post_QC2.py` is the updated version of `post_QC.py`, designed specifically for **native REGENIE output** (space or tab separated):
+
+```
+CHROM GENPOS ID ALLELE0 ALLELE1 A1FREQ N TEST BETA SE CHISQ LOG10P EXTRA
+```
+
+It adds two new filters compared to `post_QC.py`:
+- **MAF threshold** (`--maf-min`)
+- **P-value / LOG10P threshold** (`--log10p-min`, `--p-max`)
+- **Auto-detection** of space vs tab separator
+- **`--no-hwe` flag** to disable HWE filtering entirely
+
+### Basic Usage
+
+```bash
+python3 post_QC2.py \
+  --in  gwas.regenie.gz \
+  --out gwas_filtered.tsv.gz \
+  --emac-min 100 \
+  --maf-min  0.001 \
+  --hwe-minp 1e-12
+```
+
+### All Available Arguments
+
+#### 📁 Input/Output
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--in` | `-` (stdin) | Input REGENIE file (.gz or text) |
+| `--out` | `-` (stdout) | Output filtered file (.gz or text) |
+
+#### 🎯 Filtering Thresholds
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--emac-min` | `100.0` | Minimum EMAC = 2 × N × MAF |
+| `--maf-min` | `0.0` | Minimum MAF (e.g. `0.001`) |
+| `--hwe-minp` | `1e-12` | Minimum HWE p-value |
+| `--no-hwe` | Flag | Disable HWE filter entirely |
+| `--log10p-min` | `None` | Minimum LOG10P (e.g. `1.3` = p < 0.05) |
+| `--p-max` | `None` | Maximum P-value (e.g. `0.05`) |
+
+#### 📊 Column Names (REGENIE defaults)
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--id-col` | `ID` | SNP identifier column |
+| `--aaf-col` | `A1FREQ` | Allele frequency column |
+| `--n-col` | `N` | Sample size column |
+| `--log10p-col` | `LOG10P` | LOG10P column |
+
+### Advanced Examples
+
+#### Standard REGENIE filtering
+```bash
+python3 post_QC2.py \
+  --in  gwas.regenie.gz \
+  --out gwas_filtered.tsv.gz \
+  --emac-min 100 \
+  --maf-min  0.001 \
+  --hwe-minp 1e-12
+```
+
+#### Without HWE filter (e.g. imputed data or rare variants)
+```bash
+python3 post_QC2.py \
+  --in  gwas.regenie.gz \
+  --out gwas_filtered.tsv.gz \
+  --emac-min 100 \
+  --maf-min  0.001 \
+  --no-hwe
+```
+
+#### Keep only genome-wide significant hits
+```bash
+python3 post_QC2.py \
+  --in  gwas.regenie.gz \
+  --out gwas_significant.tsv.gz \
+  --emac-min 100 \
+  --no-hwe \
+  --log10p-min 7.3
+```
+
+### Differences vs post_QC.py
+
+| Feature | `post_QC.py` | `post_QC2.py` |
+|---------|-------------|--------------|
+| Format | Custom TSV (`Info` field) | **REGENIE native** |
+| Default columns | `Name`, `AAF`, `Num_Cases` | **`ID`, `A1FREQ`, `N`** |
+| Separator | Tab only | **Auto (space or tab)** |
+| MAF filter | ❌ | ✅ `--maf-min` |
+| P-value filter | ❌ | ✅ `--log10p-min` / `--p-max` |
+| `--no-hwe` | ✅ | ✅ |
+| Genotype count columns | ✅ | Estimated from A1FREQ + N |
+
+---
+
+## 5. Pre-munge for LDSC
 
 ### Overview
 
@@ -290,7 +399,7 @@ This provides a standardized measure of effect size across the genome.
 
 ---
 
-## 5. Complete Workflow Example
+## 6. Complete Workflow Example
 
 ### For Case-Control GWAS (Logistic Regression)
 
@@ -355,7 +464,7 @@ python prep_munge.py \
 
 ---
 
-## 6. Column Mapping
+## 7. Column Mapping
 
 ### Default Column Names
 
@@ -435,7 +544,7 @@ zcat gwasA_PHENO.filtered.tsv.gz | awk 'BEGIN{FS=OFS="\t"}
 
 ---
 
-## 7. Recommended Thresholds
+## 8. Recommended Thresholds
 
 | Analysis Type | EMAC min | HWE min p | Notes |
 |--------------|----------|-----------|-------|
@@ -456,7 +565,7 @@ zcat gwasA_PHENO.filtered.tsv.gz | awk 'BEGIN{FS=OFS="\t"}
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 ### post_QC.py Issues
 
@@ -534,7 +643,7 @@ python prep_munge.py \
 
 ---
 
-## 9. Performance Notes
+## 10. Performance Notes
 
 - **Speed**: ~100-500K variants/second (hardware dependent)
 - **Memory**: Line-by-line processing, minimal memory footprint (~50MB)
@@ -546,7 +655,7 @@ python prep_munge.py \
 
 ---
 
-## 10. Validation
+## 11. Validation
 
 ### Verify post_QC.py output
 
@@ -576,7 +685,7 @@ zcat gwasA_PHENO.pre_munged.tsv.gz | awk -F'\t' 'NR>1 && $5!="" {print $5}' | so
 
 ---
 
-## 11. License / Provenance
+## 12. License / Provenance
 
 - These scripts are a Python reimplementation of C/C++ utilities (`post_filter.C`, `prep_munge.C`) and mimic PLINK2 routines (HWE test, chi-square).
 - Original PLINK2 headers (`plink2_base`, `plink2_string`, `plink2_stats`) are under permissive licenses (Boost, BSD, LGPL). This Python code is a clean rewrite without reuse of C/C++ source.
@@ -584,7 +693,7 @@ zcat gwasA_PHENO.pre_munged.tsv.gz | awk -F'\t' 'NR>1 && $5!="" {print $5}' | so
 
 ---
 
-## 12. Citation
+## 13. Citation
 
 If you use these scripts in your research, please cite:
 
@@ -594,7 +703,7 @@ If you use these scripts in your research, please cite:
 
 ---
 
-## 13. Support
+## 14. Support
 
 For issues, questions, or contributions:
 1. Check the troubleshooting section
